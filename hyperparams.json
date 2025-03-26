@@ -1,0 +1,56 @@
+{
+"classification": {
+    "log_reg": {
+        "penalty": {"type": "categorical", "choices": ["l2"]},
+        "C": {"type": "float", "low": 0.0001, "high": 10, "step": null, "log": false}, 
+        "tol": {"type": "float", "low": 1e-06, "high": 0.1, "step": null, "log": false}, 
+        "solver": {"type": "categorical", "choices": ["lbfgs", "liblinear", "newton-cg", "newton-cholesky", "sag", "saga"]}
+    }, 
+    "KNN": {
+        "n_neighbors": {"type": "int", "low": 2, "high": 60, "step": 1, "log": false}, 
+        "weights": {"type": "categorical", "choices": ["uniform", "distance"]}, 
+        "leaf_size": {"type": "int", "low": 5, "high": 60, "step": null, "log": false}, 
+        "p": {"type": "int", "low": 1, "high": 5, "step": null, "log": false}
+    }, 
+    "tree": {
+        "criterion": {"type": "categorical", "choices": ["gini", "entropy", "log_loss"]}, 
+        "splitter": {"type": "categorical", "choices": ["best", "random"]}, 
+        "max_depth": {"type": "int", "low": 3, "high": 100, "step": null, "log": false}, 
+        "min_samples_split": {"type": "int", "low": 2, "high": 12, "step": null, "log": false}, 
+        "min_samples_leaf": {"type": "int", "low": 1, "high": 12, "step": null, "log": false}, 
+        "max_features": {"type": "categorical", "choices": [null, "sqrt", "log2"]}
+    }, 
+    "rand_for": {
+        "n_estimators": {"type": "int", "low": 10, "high": 300, "step": null, "log": false}, 
+        "criterion": {"type": "categorical", "choices": ["gini", "entropy", "log_loss"]}, 
+        "max_depth": {"type": "int", "low": 3, "high": 100, "step": null, "log": false}, 
+        "min_samples_split": {"type": "int", "low": 2, "high": 12, "step": null, "log": false}, 
+        "min_samples_leaf": {"type": "int", "low": 1, "high": 12, "step": null, "log": false}, 
+        "max_features": {"type": "categorical", "choices": [null, "sqrt", "log2"]}
+    }, 
+    "SVC": {
+        "C": {"type": "float", "low": 0.0001, "high": 10, "step": null, "log": false}, 
+        "kernel": {"type": "categorical", "choices": ["linear", "poly", "rbf", "sigmoid"]}, 
+        "degree": {"type": "int", "low": 2, "high": 6, "step": null, "log": false}, 
+        "gamma": {"type": "categorical", "choices": ["scale", "auto"]}, 
+        "tol": {"type": "float", "low": 0.0001, "high": 0.1, "step": null, "log": false}, 
+        "shrinking": {"type": "categorical", "choices": [true, false]}
+    }, 
+    "grad_boost": {
+        "learning_rate": {"type": "float", "low": 0.0001, "high": 10, "step": null, "log": false}, 
+        "n_estimators": {"type": "int", "low": 10, "high": 300, "step": null}, 
+        "log": false, "subsample": {"type": "float", "low": 0.1, "high": 1, "step": 0.1}, 
+        "criterion": {"type": "categorical", "choices": ["friedman_mse", "squared_error"]}, 
+        "max_depth": {"type": "int", "low": 3, "high": 100, "step": null, "log": false}, 
+        "min_samples_split": {"type": "int", "low": 2, "high": 12, "step": null, "log": false}, 
+        "min_samples_leaf": {"type": "int", "low": 1, "high": 12, "step": null, "log": false}, 
+        "max_features": {"type": "categorical", "choices": [null, "sqrt", "log2"]}
+    }, 
+    "ANN": {
+        "n_dense_layers": {"type": "int", "low": 1, "high": 5, "step": 2, "sampling": "log"}, 
+        "dense_units": {"type": "int", "low": 16, "high": 256, "step": 16, "sampling": "linear"}, 
+        "dropout_rate": {"type": "float", "low": 0, "high": 0.8, "step": 0.1, "sampling": "linear"}, 
+        "learning_rate": {"type": "float", "low": 0.0001, "high": 0.1, "step": 2, "sampling": "log"}
+    }
+}
+}
