@@ -8,22 +8,21 @@ import random
 from abc import ABC, abstractmethod
 
 from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.linear_model import LogisticRegression
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.svm import SVC
-from sklearn.ensemble import RandomForestClassifier
-from xgboost.sklearn import XGBClassifier
+from sklearn.linear_model import Ridge
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.svm import SVR
+from sklearn.ensemble import RandomForestRegressor
+from xgboost.sklearn import XGBRegressor
 from sklearn.metrics import (
-    accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    confusion_matrix,
-    ConfusionMatrixDisplay,
+    mean_squared_error,
+    mean_absolute_error,
+    r2_score,
+    root_mean_squared_error,
 )
 
 from tensorflow.random import set_seed
+from tensorflow.keras.metrics import MeanAbsoluteError, MeanSquaredError
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Dense, Dropout
 from tensorflow.keras.optimizers import Adam
@@ -33,7 +32,6 @@ import tensorflow.keras.saving as ks
 import keras_tuner as kt
 
 import matplotlib.pyplot as plt
-
 
 from utils.utils import (
     type_assertion,
@@ -47,27 +45,26 @@ from utils.utils import (
 
 
 available_models = {
-    "log_reg": LogisticRegression,
-    "KNN": KNeighborsClassifier,
-    "decision_tree": DecisionTreeClassifier,
-    "random_forest": RandomForestClassifier,
-    "SVC": SVC,
-    "XG_boost": XGBClassifier,
+    "lin_reg": Ridge,
+    "KNN": KNeighborsRegressor,
+    "decision_tree": DecisionTreeRegressor,
+    "random_forest": RandomForestRegressor,
+    "SVR": SVR,
+    "XG_boost": XGBRegressor,
     "ANN": "ANN",
 }
 
 metric_fns = {
-    "f1_score": f1_score,
-    "accuracy": accuracy_score,
-    "recall": recall_score,
-    "precision": precision_score,
+    "mean_squared_error": mean_squared_error,
+    "mean_absolute_error": mean_absolute_error,
+    "r2_score": r2_score,
+    "root_mean_squared_error": root_mean_squared_error,
 }
 
 
-def compile_keras_classification_model(
+def compile_keras_regression_model(
     hp,
     input_shape: np.ndarray,
-    n_classes: int,
     hyperparam_grid: dict,
 ):
     """Compiles a keras model to be pased to a keras_tuner tuner for hyperparameter tuning. This function is only passed by a tuner object.
@@ -75,10 +72,8 @@ def compile_keras_classification_model(
     Args:
         hp: Hyperparameter object for keras-tuner.
         input_shape (np.ndarray): Input shape of a single observation.
-        n_classes (int): Number of possible classes of target.
         hyperparam_grid (dict): Dictionary of hyperparameters to search across
     """
-    type_assertion(n_classes, int)
 
     model = Sequential()
 
@@ -99,30 +94,31 @@ def compile_keras_classification_model(
     optimizer = Adam(learning_rate=learning_rate)
 
     for i in range(0, n_dense_layers):
-        model.add(Dense(units=dense_units, activation="relu"))
-        model.add(Dropout(rate=dropout_rate))
+        if i == 0:
+            model.add(Dense(units=dense_units, activation="relu", input_shape=input_shape))
+            model.add(Dropout(rate=dropout_rate))
+        else:
+            model.add(Dense(units=dense_units, activation="relu"))
+            model.add(Dropout(rate=dropout_rate))
 
-    if n_classes == 2:
-        model.add(Dense(units=1, actvation="sigmoid"))
-        model.compile(
-            optimizer=optimizer, loss="binary_crossentropy", metrics=["accuracy"]
-        )
-    else:
-        model.add(Dense(units=n_classes, activation="softmax"))
-        model.compile(
-            optimizer=optimizer,
-            loss="sparse_categorical_crossentropy",
-            metrics=["accuracy"],
-        )
+    model.add(Dense(units=1))
+
+    model.compile(
+        optimizer=optimizer,
+        loss="mse",
+        metrics=[
+            MeanAbsoluteError(name="mae"), 
+            MeanSquaredError(name="mse"),
+            ],
+    )
     return model
 
 
-def compile_keras_classification_model_manual(
+def compile_keras_regression_model_manual(
     n_layers: int,
     dense_units: int,
     dropout_rate: float,
     learning_rate: float,
-    n_classes: int,
     activation: str = "relu",
 ) -> Sequential:
     """Function allowing a manual creation of a keras ANN model with specified hyperparameters.
@@ -132,7 +128,6 @@ def compile_keras_classification_model_manual(
         dense_units (int): Number of units per dense layer.
         dropout_rate (float): Desired dropout rate. Must be in range [0,1).
         learning_rate (float): Desired learning rate to be used by the optimizer.
-        n_classes (int): Number of possible classes of the target.
         activation (str, optional): Activation function to use. Limited to: ["relu", "leaky_relu", "tanh", "sigmoid", "softmax"]. Defaults to "relu".
 
     Raises:
@@ -143,7 +138,7 @@ def compile_keras_classification_model_manual(
     """
     type_assertion(n_layers, int), type_assertion(dense_units, int), type_assertion(
         dropout_rate, float | int
-    ), type_assertion(learning_rate, float | int), type_assertion(n_classes, int)
+    ), type_assertion(learning_rate, float | int)
     try:
         assert (
             n_layers > 0 and dense_units > 0 and dropout_rate > 0 and learning_rate > 0
@@ -151,12 +146,6 @@ def compile_keras_classification_model_manual(
     except:
         raise ValueError(
             "The values for n_layers, dense_units, dropout_rate, and learning_rate must be strictly positive."
-        )
-    try:
-        assert n_classes > 1
-    except:
-        raise ValueError(
-            "Number of classes must be greater than 1 for meaningful classification."
         )
     try:
         assert activation in ["relu", "leaky_relu", "tanh", "sigmoid", "softmax"]
@@ -172,28 +161,25 @@ def compile_keras_classification_model_manual(
         model.add(Dense(units=dense_units, activation=activation))
         model.add(Dropout(rate=dropout_rate))
 
-    if n_classes == 2:
-        model.add(Dense(units=1, actvation="sigmoid"))
-        model.compile(
-            optimizer=optimizer, loss="binary_crossentropy", metrics=["accuracy"]
-        )
-    else:
-        model.add(Dense(units=n_classes, activation="softmax"))
-        model.compile(
-            optimizer=optimizer,
-            loss="sparse_categorical_crossentropy",
-            metrics=["accuracy"],
-        )
+    model.add(Dense(units=1))
+    model.compile(
+        optimizer=optimizer,
+        loss="mse",
+        metrics=[
+            MeanAbsoluteError(name="mae"), 
+            MeanSquaredError(name="mse"),
+            ],
+    )
     return model
 
 
-class ClassificationModel(ABC):
+class RegressionModel(ABC):
     """
-    Abstract Class for generic classification model.
+    Abstract Class for generic regression model.
     """
 
     def __init__(self, seed: int | float = 0, model: object = None, **params):
-        """Contructor basis for all Classification models.
+        """Contructor basis for all Regression models.
 
         Args:
             seed (int | float, optional): Seed to set for all randomized actions taken by the class. Defaults to 0.
@@ -239,8 +225,7 @@ class ClassificationModel(ABC):
         x: pd.DataFrame,
         y: pd.Series | pd.DataFrame,
         hyperparam_grid: dict,
-        metric_choice: str = "f1",
-        non_binary_averaging="weighted",
+        metric_choice: str = "mean_squared_error",
         **params,
     ) -> float:
         """Method for use only by optuna trials to choose hyperparams from grid, fit model, and return metric.
@@ -250,8 +235,7 @@ class ClassificationModel(ABC):
             x (pd.DataFrame): Feature dataset.
             y (pd.Series | pd.DataFrame): Target dataset.
             hyperparam_grid (dict): Hyperparameter dictionary to specify gird search space.
-            metric_choice (str, optional): Metric to optimize hyperparameters for from: ["f1", "accuracy", "precision", "recall"]. Defaults to "f1".
-            non_binary_averaging (str, optional): Type of weighting to use for metric if there are more than 2 classes. Defaults to "weighted".
+            metric_choice (str, optional): Metric to optimize hyperparameters for from: ["mean_squared_error", "mean_absolute_error", "r2_score", "root_mean_squared_error"]. Defaults to "f1".
 
         Raises:
             ValueError: If a non-valid str is passed for metric_choice.
@@ -259,26 +243,24 @@ class ClassificationModel(ABC):
         Returns:
             float: Specified metric which was achieved by the model in this trial.
         """
+
         if self.model_type != "ANN":
             try:
-                assert metric_choice in ["f1", "accuracy", "precision", "recall"]
-                assert non_binary_averaging in ["micro", "macro", "weighted"]
+                assert metric_choice in ["mean_squared_error", "mean_absolute_error", "r2_score", "root_mean_squared_error"]
             except:
                 raise ValueError(
-                    "The value for metric_choice must be in ['f1', 'accuracy', 'precision', 'recall'] and the value for non_binary_averaging must be in ['micro', 'macro', 'weighted']"
+                    "The value for metric_choice must be in ['mean_squared_error', 'mean_absolute_error', 'r2_score', 'root_mean_squared_error']"
                 )
+            if metric_choice == "r2_score":
+                metric_choice = "r2"
+            else:
+                metric_choice = "neg_" + metric_choice
             params: dict = create_param_dict(
                 trial=trial, model_type=self.model_type, hyperparam_grid=hyperparam_grid
             )
             model = self.model(**params)
             model.fit(x, y)
-            n_classes = y.nunique()
-            if metric_choice != "accuracy":
-                if n_classes != 2:
-                    metric_choice = metric_choice + "_" + non_binary_averaging
-            metric = cross_val_score(
-                model, x, y, scoring=metric_choice, cv=5
-            )  #: float = metric_fns[metric_to_use](y, y_pred, average='macro')
+            metric = cross_val_score(model, x, y, scoring=metric_choice, cv=5)
             metric = np.mean(metric)
             return metric
 
@@ -354,9 +336,8 @@ class ClassificationModel(ABC):
         y_true: pd.Series | pd.DataFrame,
         y_pred: pd.Series | pd.DataFrame = None,
         x: pd.DataFrame = None,
-        average_for_nonbinary: str = "weighted",
     ) -> Dict[str, float]:
-        """Returns performance metrics (f1 score, accuracy, recall, precision) for the model.
+        """Returns performance metrics ("mean_squared_error", "mean_absolute_error", "r2_score", "root_mean_squared_error") for the model.
 
         Args:
             y_true (pd.Series | pd.DataFrame): True target values to be passed and scored against.
@@ -374,84 +355,24 @@ class ClassificationModel(ABC):
                 assert x is not None
             except:
                 raise ValueError("A value must be passed for either y_pred or x")
-        n_classes = y_true.nunique()
-        if n_classes == 2:
-            average = "binary"
-        else:
-            type_assertion(average_for_nonbinary, str)
-            try:
-                assert average_for_nonbinary in ["weighted", "micro", "macro"]
-            except:
-                raise ValueError(
-                    f"The value for average_for_nonbinary must be found in ['weighted', 'micro', 'macro'], but {average_for_nonbinary} was receieved"
-                )
-            average = average_for_nonbinary
         if x is not None:
             y_pred = self.predict(x)
         output = {}
-        output["f1_score"] = f1_score(y_true, y_pred, average=average)
-        output["accuracy"] = accuracy_score(y_true, y_pred)
-        output["recall"] = recall_score(y_true, y_pred, average=average)
-        output["precision"] = precision_score(y_true, y_pred, average=average)
+        output["mean_squared_error"] = mean_squared_error(y_true, y_pred)
+        output["mean_absolute_error"] = mean_absolute_error(y_true, y_pred)
+        output["r2_score"] = r2_score(y_true, y_pred)
+        output["root_mean_squared_error"] = root_mean_squared_error(y_true, y_pred)
         return output
 
-    def generate_confusion_matrix(
-        self,
-        y_true: pd.Series | pd.DataFrame,
-        y_pred: pd.Series | pd.DataFrame = None,
-        x: pd.DataFrame = None,
-        plot: bool = False,
-        save_plot: bool = False,
-        save_dir: str = "",
-        save_name: str = "confusion_matrix",
-    ) -> np.ndarray:
-        """Creates and returns a confusion matrix for a prediction set. Can also optionally plot a confusion matrix heatmap.
 
-        Args:
-            y_true (pd.Series | pd.DataFrame): Known target dataset to compare prediction against.
-            y_pred (pd.Series | pd.DataFrame, optional): Predicted target dataset to compare to y_true, overwritten by new prediction if x is passed.. Defaults to None.
-            x (pd.DataFrame, optional): Dataset to predict with model to compate to y_true, overrides y_pred if passed. Defaults to None.
-            plot (bool, optional): Determines if a confusion matrix heatmap is plotted or not. Defaults to False.
-            save_plot (bool, optional): Determines if confusion matrix plot is saved. Defaults to False.
-            save_dir (str, optional): Directory path where plot is to be saved. Defaults to "".
-            save_name (str, optional): Filename of saved plot. Defaults to "confusion_matrix".
+class LinearRegression_(RegressionModel):
+    """ """
 
-        Raises:
-            AttributeError: If the model has not yet been fit.
-            ValueError: If no values are passed for y_pred or x.
-
-        Returns:
-            np.ndarray: Confusion matrix.
-        """
-        if self.fitted_model is None:
-            raise AttributeError(
-                "The model must be fit before a confusion matrix can be plotted."
-            )
-        if y_pred is None:
-            try:
-                assert x is not None
-            except:
-                raise ValueError("A value must be passed for either y_pred or x")
-        if x is not None:
-            y_pred = self.predict(x)
-        cm = confusion_matrix(y_true, y_pred)
-        if plot is True:
-            disp = ConfusionMatrixDisplay(confusion_matrix=cm)
-            disp.plot()
-            if save_plot is True:
-                plt.savefig(save_dir + f"{self.model_type}_" + save_name + ".png")
-            plt.show()
-        return cm
-
-
-class LogisticRegression_(ClassificationModel):
-
-    # need to include multiclass specification?
     def __init__(self, seed=0, model=None, **params):
         super().__init__(seed, model, **params)
         if model is None:
-            self.model = LogisticRegression
-        self.model_type: str = "log_reg"
+            self.model = Ridge
+        self.model_type: str = "lin_reg"
         self.seed = seed
         self.fitted_model = None
         self.additional_model_params: dict = params
@@ -462,11 +383,11 @@ class LogisticRegression_(ClassificationModel):
         print(self)
 
 
-class KNN_(ClassificationModel):
+class KNN_(RegressionModel):
     def __init__(self, seed=0, model=None, **params):
         super().__init__(seed, model, **params)
         if model is None:
-            self.model = KNeighborsClassifier
+            self.model = KNeighborsRegressor
         self.model_type = "KNN"
         self.seed = seed
         self.fitted_model = None
@@ -478,11 +399,11 @@ class KNN_(ClassificationModel):
         print(self)
 
 
-class DecisonTree_(ClassificationModel):
+class DecisonTree_(RegressionModel):
     def __init__(self, seed=0, model=None, **params):
         super().__init__(seed, model, **params)
         if model is None:
-            self.model = DecisionTreeClassifier
+            self.model = DecisionTreeRegressor
         self.model_type = "decision_tree"
         self.seed = seed
         self.fitted_model = None
@@ -494,11 +415,11 @@ class DecisonTree_(ClassificationModel):
         print(self)
 
 
-class RandomForest_(ClassificationModel):
+class RandomForest_(RegressionModel):
     def __init__(self, seed=0, model=None, **params):
         super().__init__(seed, model, **params)
         if model is None:
-            self.model = RandomForestClassifier
+            self.model = RandomForestRegressor
         self.model_type = "random_forest"
         self.seed = seed
         self.fitted_model = None
@@ -510,12 +431,12 @@ class RandomForest_(ClassificationModel):
         print(self)
 
 
-class SVC_(ClassificationModel):
+class SVR_(RegressionModel):
     def __init__(self, seed=0, model=None, **params):
         super().__init__(seed, model, **params)
         if model is None:
-            self.model = SVC
-        self.model_type = "SVC"
+            self.model = SVR
+        self.model_type = "SVR"
         self.seed = seed
         self.fitted_model = None
         self.additional_model_params: dict = params
@@ -526,11 +447,11 @@ class SVC_(ClassificationModel):
         print(self)
 
 
-class XGBoost_(ClassificationModel):
+class XGBoost_(RegressionModel):
     def __init__(self, seed=0, model=None, **params):
         super().__init__(seed, model, **params)
         if model is None:
-            self.model = XGBClassifier
+            self.model = XGBRegressor
         self.model_type = "XG_boost"
         self.seed = seed
         self.fitted_model = None
@@ -542,11 +463,10 @@ class XGBoost_(ClassificationModel):
         print(self)
 
 
-class NeuralNet_(ClassificationModel):
+class NeuralNet_(RegressionModel):
     def __init__(
         self,
         input_shape: np.ndarray,
-        n_classes: int,
         seed=0,
         model=None,
         batch_size: int = 64,
@@ -559,13 +479,12 @@ class NeuralNet_(ClassificationModel):
         self.model = model
         self.fitted_model = None
         self.additional_model_params: dict = params
-        self.n_classes: int = n_classes
         self.input_shape = input_shape
         self.metrics = {}
         self.batch_size = batch_size
         self.epochs = epochs
         self.hyperparams = None
-        # early stopping
+    # early stopping?
 
     def __str__(self) -> None:
         """Prints basic information about the model."""
@@ -655,12 +574,6 @@ class NeuralNet_(ClassificationModel):
             raise ValueError("Value passed for batch size must be positive.")
         self.batch_size = batch_size
 
-    # def get_weights(self):
-    #     if self.fitted_model is None:
-    #         raise AttributeError(
-    #             "The model must be fitted before it can be used to predict."
-    #         )
-
     def predict(self, x: pd.DataFrame) -> np.ndarray:
         """Inputs the dataset x into the trained model and returns the predicted targets.
 
@@ -681,13 +594,12 @@ class NeuralNet_(ClassificationModel):
                 "The model must be fitted before it can be used to predict."
             )
         type_assertion(x, pd.DataFrame | np.ndarray)
-        if self.n_classes > 2:
-            return np.argmax(self.fitted_model.predict(x), axis=1)
-        else:
-            return np.round(self.fitted_model.predict(x))
+
+        return self.fitted_model.predict(x)
+         # need to confirm this returns the prediction
 
 
-class ClassificationModelOrganizer:
+class RegressionModelOrganizer:
     """
     Class object which can hold instances of several classification models and can perform hyperparameter optimization, training, evaluation, and prediction on sets of them.
     """
@@ -707,13 +619,12 @@ class ClassificationModelOrganizer:
             df (pd.DataFrame): Dataframe of preprocessed data ready to be split and fit.
             target_labels (str | List[str]): Column labels corresponding to the target variables.
             file_directory (str, optional): File directory where files will be read from and saved to by default. Defaults to "".
-            models (str | List[str], optional): Dictionary containing all the models (ClassificationModel objects) held by the organizer. Defaults to {}.
+            models (str | List[str], optional): Dictionary containing all the models (RegressionModel objects) held by the organizer. Defaults to {}.
             seed (int | float, optional): Random seed to be used for all probablisitic seeds/random states. Defaults to 0.
             hyperparam_grid (dict, optional): Dictionary of hyperparameter suggestions to be used for hyperparameter tuning. Defaults to None.
 
         Raises:
             KeyError: If target labels do not correspond to column names found in df.
-            ValueError: If there is only 1 distinct target class.
             IsADirectoryError: If input file_directory does not exist.
         """
         type_assertion(df, pd.DataFrame), type_assertion(seed, int | float)
@@ -732,11 +643,6 @@ class ClassificationModelOrganizer:
         self.x: pd.DataFrame = df.drop(target_labels, axis=1)
         self.y: pd.Series = pd.Series(df[target_labels].iloc[:, 0])
         self.features = self.x.columns
-        self.n_classes: int = self.y.nunique()
-        if self.n_classes == 1:
-            raise ValueError(
-                "Classification dataset has only one class, at least two are required to meaningful classfication."
-            )
         self.n_samples: int = df.shape[0]
         self.n_features: int = self.x.shape[1]
         self.input_shape = self.x.iloc[0].shape
@@ -750,11 +656,11 @@ class ClassificationModelOrganizer:
         self.models = models
         self.hyperparam_grid = hyperparam_grid
         self.model_classes = {
-            "log_reg": LogisticRegression_,
+            "lin_reg": LinearRegression_,
             "KNN": KNN_,
             "decision_tree": DecisonTree_,
             "random_forest": RandomForest_,
-            "SVC": SVC_,
+            "SVR": SVR_,
             "XG_boost": XGBoost_,
             "ANN": NeuralNet_,
         }
@@ -804,14 +710,12 @@ class ClassificationModelOrganizer:
                 if i == "y":
                     break
 
-        if model_type == "ANN" and (
-            "n_classes" not in params.keys() or "input_shape" not in params.keys()
-        ):
+        if model_type == "ANN" and "input_shape" not in params.keys():
             raise ValueError(
-                "For an Neural Network, values for input_shape and n_classes must also be passed."
+                "For an Neural Network, value for input_shape must also be passed."
             )
         self.models[model_type] = self.model_classes[model_type](
-            seed=self.seed, **params
+            seed=self.seed, random_state=self.seed, **params
         )
 
     def load_model(self, path: str, model_type: str):
@@ -836,14 +740,12 @@ class ClassificationModelOrganizer:
         try:
             assert (
                 model_type in available_models.keys()
-            ) 
+            )  # does this work if this module is imported
         except:
             raise KeyError(f"The model_type must be one of {available_models.keys()}.")
         if model_type == "ANN":
             loaded_model = ks.load_model(path)
-            self.create_model(
-                "ANN", n_classes=self.n_classes, input_shape=self.x.iloc[0].shape
-            )
+            self.create_model("ANN", input_shape=self.x.iloc[0].shape)
         else:
             with open(path, "rb") as file:
                 loaded_model = pkl.load(file)
@@ -852,7 +754,7 @@ class ClassificationModelOrganizer:
         self.models[model_type].fitted_model = loaded_model
         self.models[model_type].n_features = self.n_features
 
-    def get_model(self, model_type: str) -> ClassificationModel:
+    def get_model(self, model_type: str) -> RegressionModel:
         """Returns direct instance of a Model Class from self.models.
 
         Args:
@@ -862,7 +764,7 @@ class ClassificationModelOrganizer:
             ValueError: If an invalid value is passed for either model_type or name or if no value are passed for either.
 
         Returns:
-            ClassificationModel: Class object of the desired model.
+            RegressionModel: Class object of the desired model.
         """
         try:
             type_assertion(model_type, str)
@@ -922,7 +824,7 @@ class ClassificationModelOrganizer:
         self,
         x_train: pd.DataFrame,
         y_train: pd.Series | pd.DataFrame,
-        model: ClassificationModel,
+        model: RegressionModel,
         n_trials: int = 100,
         search_method: str = "base",
     ) -> tuple[int, dict]:
@@ -931,7 +833,7 @@ class ClassificationModelOrganizer:
         Args:
             x_train (pd.DataFrame): Feature dataset to be used for training.
             y_train (pd.Series | pd.DataFrame): Target dataset to be used for training.
-            model (ClassificationModel): Instance of ClassficationModel class which it to be optimized.
+            model (RegressionModel): Instance of RegressionModel class which it to be optimized.
             n_trials (int, optional):  Int value which specifies the maximum number of trials the study will run for. Defaults to 100.
 
         Raises:
@@ -959,7 +861,7 @@ class ClassificationModelOrganizer:
                 f"The value for search method must be in {sampler_dict.keys()} but {search_method} was received instead."
             )
         objective = model.__call__
-        study = optuna.create_study(direction="maximize")
+        study = optuna.create_study(direction="maximize") 
         study.optimize(
             lambda trial: objective(
                 trial, x=x_train, y=y_train, hyperparam_grid=self.hyperparam_grid
@@ -972,17 +874,17 @@ class ClassificationModelOrganizer:
         self,
         x_train: pd.DataFrame,
         y_train: pd.Series | pd.DataFrame,
-        model: ClassificationModel,
+        model: RegressionModel,
         tuner_choice: str = "hyperband",
         n_trials: int = 100,
-        dir: str = "",
+        dir: str = None,
     ):
         """Creates and runs a keras_tuner tuning search using the specified model and hyperparameter_grid dictionary.
 
         Args:
             x_train (pd.DataFrame): Feature dataset to be used for training.
             y_train (pd.Series | pd.DataFrame): Target dataset to be used for training.
-            model (ClassificationModel): ClassificationModel class obejct to be tuned.
+            model (RegressionModel): RegressionModel class obejct to be tuned.
             tuner_choice (str, optional): Tuner to be used in search. Must be from avaible options: ['random_search', 'grid_serach', 'bayesian', 'hyperband']. Defaults to 'hyperband'.
             n_trials (int, optional): Int value which specifies the maximum number of trials the study will run for search methods which allow it. Defaults to 100.
             dir (str, optional): Directory to override the self.directory for saving tuner trials. If None is passed, self.file_directory will be used. Defaults to None.
@@ -1009,30 +911,28 @@ class ClassificationModelOrganizer:
             )
         if tuner_choice == "hyperband":
             tuner = tuners[tuner_choice](
-                lambda hp: compile_keras_classification_model(
+                lambda hp: compile_keras_regression_model(
                     hp,
                     input_shape=self.input_shape,
-                    n_classes=self.n_classes,
                     hyperparam_grid=self.hyperparam_grid,
                 ),
-                objective="val_accuracy",
+                objective=kt.Objective("val_mse", direction="min"),
                 max_epochs=100,
                 seed=self.seed,
                 directory=self.file_directory,
-                project_name="ANN Classification Hyperparameter Tuning",
+                project_name="ANN Hyperparameter Tuning",
             )
         else:
             tuner = tuners[tuner_choice](
-                lambda hp: compile_keras_classification_model(
+                lambda hp: compile_keras_regression_model(
                     hp,
                     input_shape=self.input_shape,
-                    n_classes=self.n_classes,
                     hyperparam_grid=self.hyperparam_grid,
                 ),
-                objective="val_accuracy",
+                objective=kt.Objective("val_mse", direction="min"),
                 seed=self.seed,
                 directory=self.file_directory,
-                project_name="ANN Hyperparameter Tuning",
+                project_name="ANN Regression Hyperparameter Tuning",
                 max_trials=n_trials,
             )
 
@@ -1165,7 +1065,7 @@ class ClassificationModelOrganizer:
             y_true (pd.Series | pd.DataFrame, optional): Target dataset to optionally override self.y_test if passed. Defaults to None.
             models_to_score (list, optional):  List to specify which models are to be used for scoring. If None is passed, all models will be used. Defaults to None.
             y_preds (Dict[str, np.ndarray], optional): Target predictions dataset to optionally skip re-predicting. Defaults to None.
-            overwrite_model_metrics (bool, optional): Determines if model metrics are overwritten or not in the ClassificationModel class object. Defaults to True.
+            overwrite_model_metrics (bool, optional): Determines if model metrics are overwritten or not in the RegressionModel class object. Defaults to True.
 
         Raises:
             KeyError: If any items in models_to_score do not correspond to an existing model_key.
@@ -1299,7 +1199,7 @@ class ClassificationModelOrganizer:
                     model_class.fit(self.x, self.y)
                     self.models[model_key].hyperparams = model_params[model_key]
                 else:
-                    self.models[model_key] = compile_keras_classification_model_manual(
+                    self.models[model_key] = compile_keras_regression_model_manual(
                         **hyper_params[model_key]
                     )
                     model_class = self.models[model_key]
@@ -1325,7 +1225,7 @@ class ClassificationModelOrganizer:
         display_plot: bool = True,
         save_plot: bool = False,
         save_dir: str = "",
-        save_name: str = "classification_metrics",
+        save_name: str = "regression_metrics",
     ) -> pd.DataFrame:
         """Compares scoring metrics on a set of fitted models with the option to plot a series of barcharts comparing these metrics. Models must already be fit and scored.
 
@@ -1335,7 +1235,7 @@ class ClassificationModelOrganizer:
             display_plot (bool, optional): Specifies if the plot will be displayed or not. Defaults to True.
             save_plot (bool, optional): Specifies if the plot should be saved if created. Defaults to False.
             save_dir (str, optional): Directory where the plot is to be saved. Defaults to "".
-            save_name (str, optional): Filename the plot will be saved as. Defaults to "classification_metrics".
+            save_name (str, optional): Filename the plot will be saved as. Defaults to "regression_metrics".
 
         Raises:
             KeyError: If any items in models_to_compare do not correspond to an existing model_key.
@@ -1368,14 +1268,14 @@ class ClassificationModelOrganizer:
         metrics = {}
         for model_key in models_to_compare:
             try:
-                assert "f1_score" in self.models[model_key].metrics.keys()
+                assert "mean_squared_error" in self.models[model_key].metrics.keys()
             except:
                 raise KeyError("The models must already be scored to compare them.")
             metrics[model_key] = {
-                "F1 Score": self.models[model_key].metrics["f1_score"],
-                "Accuracy": self.models[model_key].metrics["accuracy"],
-                "Recall": self.models[model_key].metrics["recall"],
-                "Precision": self.models[model_key].metrics["precision"],
+                "Mean Squared Error": self.models[model_key].metrics["mean_squared_error"],
+                "Mean Absolute Error": self.models[model_key].metrics["mean_absolute_error"],
+                "R2 Score": self.models[model_key].metrics["r2_score"],
+                "Root Mean Squared Error": self.models[model_key].metrics["root_mean_squared_error"],
             }
         metrics_df = pd.DataFrame(metrics).T
         if plot is True:

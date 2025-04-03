@@ -121,3 +121,77 @@ def load_JSON(path: str) -> dict:
         return data
 
 
+def create_optuna_suggestion(
+    trial, model_type: str, parameter: str, hyperparam_grid: dict
+):
+    """
+    Reads from hyperparameter_grid dictionary and returns the specified parameter as a optuna trial suggestion.
+    """
+    parameter_dict = hyperparam_grid[model_type][parameter]
+    if parameter_dict["type"] == "int":
+        kwargs = {
+            "name": parameter,
+            "low": parameter_dict["low"],
+            "high": parameter_dict["high"],
+            "log": parameter_dict["log"],
+        }
+        if parameter_dict["step"] is not None:
+            kwargs["step"] = parameter_dict["step"]
+        return trial.suggest_int(**kwargs)
+    if parameter_dict["type"] == "float":
+        kwargs = {
+            "name": parameter,
+            "low": parameter_dict["low"],
+            "high": parameter_dict["high"],
+            "log": parameter_dict["log"],
+        }
+        if parameter_dict["log"] is None:
+            kwargs["step"] = parameter_dict["step"]
+        return trial.suggest_float(**kwargs)
+    if parameter_dict["type"] == "uniform":
+        return trial.suggest_uniform(
+            parameter,
+            parameter_dict["low"],
+            parameter_dict["high"],
+            step=parameter_dict["step"],
+        )
+    if parameter_dict["type"] == "categorical":
+        return trial.suggest_categorical(parameter, parameter_dict["choices"])
+
+
+def create_param_dict(trial, model_type: str, hyperparam_grid) -> dict:
+    """
+    Creates a dictionary of optuna suggestions to be used by an Optuna objective.
+    """
+    params: dict = {}
+    model_dict: dict = hyperparam_grid[model_type]
+    for key in model_dict:
+        params[key] = create_optuna_suggestion(
+            trial, model_type, key, hyperparam_grid=hyperparam_grid
+        )
+    return params
+
+
+def create_kt_suggestion(hp, model_type, parameter, param_dict):
+
+    parameter_dict = param_dict[model_type][parameter]
+    if parameter_dict["type"] == "int":
+        return hp.Int(
+            parameter,
+            min_value=parameter_dict["low"],
+            max_value=parameter_dict["high"],
+            step=parameter_dict["step"],
+            sampling=parameter_dict["sampling"],
+        )
+    if parameter_dict["type"] == "float":
+        return hp.Float(
+            parameter,
+            min_value=parameter_dict["low"],
+            max_value=parameter_dict["high"],
+            step=parameter_dict["step"],
+            sampling=parameter_dict["sampling"],
+        )
+    if parameter_dict["type"] == "categorical":
+        return hp.Choice(parameter, values=parameter_dict["choices"])
+    if parameter_dict["type"] == "bool":
+        return hp.Boolean(parameter)

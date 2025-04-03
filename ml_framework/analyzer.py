@@ -30,6 +30,7 @@ class Analyzer:
         df: pd.DataFrame,
         target_labels: str | List[str] = [],
         seed: int | float = 0,
+        dir_path: str = "",
     ):
         type_assertion(df, pd.DataFrame), type_assertion(seed, int | float)
         self.df: pd.DataFrame = df
@@ -38,7 +39,7 @@ class Analyzer:
                 assert target_labels in df.columns
             except:
                 raise KeyError(
-                    f"Target label must be one of the names of the sulumns in self.df: {self.df.columns}."
+                    f"Target label must be one of the names of the columns in self.df: {self.df.columns}."
                 )
             self.target_labels = [target_labels]
         else:
@@ -47,6 +48,7 @@ class Analyzer:
         self.sample_dfs: dict = {}
         self.n_samples: int = self.df.shape[0]
         self.seed: int | float = seed
+        self.dir_path = dir_path
         self.n_targets = len(self.target_labels)
         if self.n_targets != 0:
             type_assertion(target_labels, str, iterable=True)
@@ -148,7 +150,7 @@ class Analyzer:
     def save_frame(
         self,
         save_as: str = "pkl",
-        path: str = "",
+        path: str = None,
         sample_df: str = None,
         cols_to_save: List[str] | pd.Index | pd.Series | np.ndarray = None,
     ) -> None:
@@ -156,7 +158,7 @@ class Analyzer:
 
         Args:
             save_as (str, optional): Type of file the frame is to be saves as from ["pkl", "csv"]. Defaults to "pkl".
-            path (str, optional): Directory path at which the file is to be saved. Defaults to "".
+            path (str, optional): Directory path at which the file is to be saved. If None is pased, self.dir_path will be used. Defaults to None.
             sample_df (str, optional): If passed, specifies a sampled frame to be used instead of self.df. Defaults to None.
             cols_to_save (List[str] | pd.Index | pd.Series | np.ndarray, optional): Optionable way to save only sepcific columns by passing their labels in an iterable. Defaults to None.
 
@@ -169,7 +171,8 @@ class Analyzer:
             assert save_as in save_options.keys
         except:
             raise KeyError(f"The str save_as must be one of {save_options.keys}.")
-
+        if path is None:
+            path = self.dir_path
         if sample_df is not None:
             type_assertion(sample_df, str)
             try:
@@ -337,7 +340,7 @@ class Analyzer:
             output_df = input_df.fillna(value=fill)
         self.df = pd.concat(output_df, input_df.drop(cols_to_fill, axis=1))
 
-    def set_col_dtype(self, col: str, dtype: type) -> None:
+    def set_col_dtype(self, col: str, dtype: str) -> None:
         """
         Sets the dtype of specified column.
         Parameters:
@@ -354,7 +357,9 @@ class Analyzer:
         self.df[col] = self.df[col].astype(dtype=dtype)
 
     # Data Preprocessing Methods (create_feature method: adds new column based on functions such as two columns added or multiplied?)
-    def encode_features(self, encoder: str, cols_to_encode: List[str] = None) -> None:
+    def encode_features(
+        self, encoder: str, cols_to_encode: List[str] = None, **encoderkwargs
+    ) -> None:
         """
         Takes in unencoded data set and encodes categorical features with either OrdinalEncoder or OneHotEncoder from sklearn as specified.
         Parameters:
@@ -362,34 +367,36 @@ class Analyzer:
             cols_to_encode (List[str], default=None): Optional list of column names to be encoded. If not passed, all applicable columns will be encoded.
         """
         type_assertion(encoder, str), type_assertion(cols_to_encode, str, iterable=True)
-        encoders: dict = {"ohe": OneHotEncoder(drop="first"), "ord": OrdinalEncoder()}
+        encoders: dict = {"ohe": OneHotEncoder, "ord": OrdinalEncoder}
         try:
-            assert encoder in encoders.keys
+            assert encoder in encoders.keys()
         except:
             raise ValueError("Value for encoder must be either 'ohe' or 'ord'.")
-        enc = encoders[encoder]
+        enc = encoders[encoder](**encoderkwargs)
         if cols_to_encode is None:
             cols_to_encode = self.df.columns
         if self.target_labels is not None and self.target_labels in cols_to_encode:
             cols_to_encode = cols_to_encode.drop(self.target_labels, axis=1)
+        for col in cols_to_encode:
+            self.df.loc[:, col] = enc.fit_transform(self.df.loc[:, [col]])
 
-            # try:
-            #     assert for x in
-            # except:
-            #     raise
-            # else:
-
-    def encode_target(self, encoder: str, set_target_labels: str = None) -> None:
+    def encode_target(
+        self, encoder: str, set_target_labels: str = None, **encoderkwargs
+    ) -> None:
         """
         Takes in unencoded target set and encodes categorical features with either OrdinalEncoder or OneHotEncoder from sklearn as specified.
         Parameters:
-            encoder (str): String representing the desired sklearn encoder to use. {'lab': LabelEncoder, 'ohe': OneHotEncoder}
+            encoder (str): String representing the desired sklearn encoder to use. {'lab': LabelEncoder, 'ohe': OneHotEncoder, 'ord': OrdinalEncoder}
             set_target_labels (str, default=None): Optional target designation, must be string of column name.
         """
         type_assertion(encoder, str)
-        encoders: dict = {"lab": LabelEncoder(), "ohe": OneHotEncoder()}
+        encoders: dict = {
+            "lab": LabelEncoder,
+            "ohe": OneHotEncoder,
+            "ord": OrdinalEncoder,
+        }
         try:
-            assert encoder in encoders.keys
+            assert encoder in encoders.keys()
         except:
             raise ValueError("Encoder must be str value of 'lab' or 'ohe'.")
         if set_target_labels is not None:
@@ -397,16 +404,16 @@ class Analyzer:
             self.set_target_labels(set_target_labels)
         elif self.n_targets == 0:
             raise ValueError("No target set, please set target and try again.")
-        enc = encoders[encoder]
+        enc = encoders[encoder](**encoderkwargs).set_output(transform="pandas")
         target = self.df[self.target_labels]
         # Need to test if the above works or if the n_targets==1 case needs special treatment
         # if self.n_targets == 1:
         #     target = self.df[self.target_labels]
         # else:
         #     target = self.df[self.target_labels]
-        enc.fit_transform(target)
+        target = enc.fit_transform(target)
         new_target_labs = target.columns
-        self.df = pd.concat(self.df.drop(self.target_labels, axis=1), target, axis=1)
+        self.df = pd.concat([self.df.drop(self.target_labels, axis=1), target], axis=1)
         self.target_labels = list(new_target_labs)
 
     def scale(
@@ -414,7 +421,7 @@ class Analyzer:
         scaler: str = "sta",
         scale_target: bool = True,
         cols_to_scale: List[str] = None,
-        minmax_range: tuple = (0, 1),
+        **scalerkwargs,
     ) -> None:
         """
         Scales columns in self.df with chosen scaler
@@ -428,21 +435,21 @@ class Analyzer:
         if cols_to_scale is not None:
             type_assertion(cols_to_scale, str, iterable=True)
         scalers = {
-            "sta": StandardScaler(),
-            "minmax": MinMaxScaler(feature_range=minmax_range),
-            "robust": RobustScaler(),
+            "sta": StandardScaler,
+            "minmax": MinMaxScaler,
+            "robust": RobustScaler,
         }
         try:
             assert scaler in scalers.keys()
         except:
             raise ValueError("Value for scaler must be 'sta', 'minmax' or 'robust'.")
-        sca = scalers[scaler]
+        sca = scalers[scaler](**scalerkwargs).set_output(transform="pandas")
         if cols_to_scale is None:
             cols_to_scale = self.df.columns
         if scale_target != True:
             cols_to_scale = cols_to_scale.drop(self.target_labels)
         scaled_df = self.df.loc[:, cols_to_scale]
-        sca.fit_transform(scaled_df)
+        scaled_df = sca.fit_transform(scaled_df)
         output_df = pd.concat((self.df.drop(cols_to_scale, axis=1), scaled_df), axis=1)
         self.df = output_df
 
@@ -481,6 +488,7 @@ class Analyzer:
             return corr
         else:
             corr = input_df.corr()
+            return corr
 
     def cut_features_by_corr(
         self,
@@ -508,7 +516,7 @@ class Analyzer:
         corr_df["t_corr"] = t_corr  # aim to maximize
         corr_df["f_corr"] = f_corr.mean()  # aim to minimize
         corr_df["comb_corr"] = (
-            (corr_df["t_corr"] + 1) * (1 - corr_df["f_corr"]) / 4
+            (corr_df["t_corr"].abs() + 1) * (1 - corr_df["f_corr"].abs()) / 4
         )  # combined metric, should range 0, 1. aim to maximize
         corr_df.sort_values(by="comb_corr", axis=0, ascending=False, inplace=True)
         if num_to_cut is not None:
@@ -522,18 +530,18 @@ class Analyzer:
             cols_to_cut = corr_df.index[-num_to_cut:]
             self.drop_columns(cols_to_cut)
         else:
-            if t_corr_threshold is not None and cut_df.shape[0] > 0:
+            if t_corr_threshold is not None and corr_df.shape[0] > 0:
                 type_assertion(t_corr_threshold, float)
                 cut_df = corr_df.loc[
-                    corr_df["t_corr"] < t_corr_threshold
+                    corr_df["t_corr"].abs() < t_corr_threshold
                 ]  # leaves in columns failing threshold values
             if f_corr_threshold is not None and cut_df.shape[0] > 0:
                 type_assertion(f_corr_threshold, float)
-                cut_df = cut_df.loc[cut_df["f_corr"] > f_corr_threshold]
+                cut_df = corr_df.loc[corr_df["f_corr"].abs() > f_corr_threshold]
             if comb_threshold is not None and cut_df.shape > 0:
                 type_assertion(comb_threshold, float)
-                cut.df = cut_df.loc[cut_df["comb_corr"] < comb_threshold]
-            cols_to_cut = cut_df.index
+                cut.df = corr_df.loc[corr_df["comb_corr"] < comb_threshold]
+            cols_to_cut = list(cut_df.index)
             self.drop_columns(cols_to_cut)
 
     # Plotting Methods
@@ -542,7 +550,7 @@ class Analyzer:
         cols_to_plot: List[str] = None,
         display_plot: bool = True,
         save_plot: bool = False,
-        save_path: str = "",
+        save_path: str = None,
         include_target: bool = False,
     ) -> None:
         """
@@ -555,6 +563,8 @@ class Analyzer:
             include_target (bool, default=False): Optional boolean to include target in the plot.
         """
         input_df = self.df
+        if save_path == None:
+            save_path = self.dir_path
         if cols_to_plot is None:
             try:
                 for name in cols_to_plot:
@@ -567,17 +577,18 @@ class Analyzer:
 
         corr = input_df[cols_to_plot].corr()
         fig = sns.heatmap(corr, annot=True, center=0).figure
+        if save_plot is True:
+            fig.savefig(save_path + "corr_matrix.png", bbox_inches="tight", format="png")
         if display_plot is True:
             fig.show()
-        if save_plot is True:
-            fig.savefig(save_path + "corr_matrix.png", bbox_inches="tight")
+        plt.close(fig)
 
     def plot_histograms_numeric(
         self,
         cols_to_plot: List[str] = None,
         display_plot: bool = True,
         save_plot: bool = False,
-        save_path: str = "",
+        save_path: str = None,
         include_target: bool = False,
         plot_grid_width: int = 3,
     ) -> None:
@@ -591,6 +602,8 @@ class Analyzer:
             include_target (bool, default=False): Optional boolean to include target (if numeric) in the plot.
             plot_grid_width (int, deafult=3):
         """
+        if save_path == None:
+            save_path = self.dir_path
         type_assertion(display_plot, bool), type_assertion(
             save_plot, bool
         ), type_assertion(save_path, str), type_assertion(
@@ -619,12 +632,7 @@ class Analyzer:
             assert len(cols_to_plot) > 0
         except:
             raise IndexError("No features to plot with these parameters.")
-        try:
-            assert plot_grid_width > 0 and plot_grid_width <= len(cols_to_plot)
-        except:
-            raise ValueError(
-                "The value for plot_grid_width must be positive and be less than or equal to the total number of plots."
-            )
+        plot_grid_width = min(len(cols_to_plot), plot_grid_width)
         feat_list = list(cols_to_plot)
         n_features_to_plot: int = len(feat_list)
         n_cols: int = plot_grid_width
@@ -655,17 +663,19 @@ class Analyzer:
                     plt.title(f"{feat_label}")
         plt.suptitle(f"Numeric Feature Histograms (n={self.n_samples})")
         plt.tight_layout()
+        if save_plot is True:
+            plt.savefig(save_path + "numeric_histograms.png", format="png")
         if display_plot is True:
             plt.show()
-        if save_plot is True:
-            plt.savefig(save_path + "numeric_histograms.png")
+        plt.close()
 
-    def plot_histograms_cetegorical(
+
+    def plot_histograms_categorical(
         self,
         cols_to_plot: List[str] = None,
         display_plot: bool = True,
         save_plot: bool = False,
-        save_path: str = "",
+        save_path: str = None,
         include_target: bool = False,
         plot_grid_width: int = 3,
     ) -> None:
@@ -679,6 +689,8 @@ class Analyzer:
             include_target (bool, default=False): Optional boolean to include target (if numeric) in the plot.
             plot_grid_width (int, deafult=3):
         """
+        if save_path == None:
+            save_path = self.dir_path
         type_assertion(display_plot, bool), type_assertion(
             save_plot, bool
         ), type_assertion(save_path, str), type_assertion(
@@ -700,7 +712,12 @@ class Analyzer:
                     "Column names must all be found in column names of self.df and must be only for categorical columns."
                 )
         if include_target is False and len(self.target_labels) > 0:
-            input_df = input_df.drop(self.target_labels, axis=1)
+            drop = False
+            for target in self.target_labels:
+                if target in list(input_df.columns):
+                    drop = True
+            if drop is True:
+                input_df = input_df.drop(self.target_labels, axis=1)
             for lab in self.target_labels:
                 cols_to_plot = list(cols_to_plot)
                 if lab in cols_to_plot:
@@ -709,12 +726,7 @@ class Analyzer:
             assert len(cols_to_plot) > 0
         except:
             raise IndexError("No features to plot with these parameters.")
-        try:
-            assert plot_grid_width > 0 and plot_grid_width <= len(cols_to_plot)
-        except:
-            raise ValueError(
-                "The value for plot_grid_width must be positive and be less than or equal to the total number of plots."
-            )
+        plot_grid_width = min(len(cols_to_plot), plot_grid_width)
         feat_list = list(cols_to_plot)
         n_features_to_plot: int = len(feat_list)
         n_cols: int = plot_grid_width
@@ -746,17 +758,18 @@ class Analyzer:
                     plt.title(f"{feat_label}")
         plt.suptitle(f"Categorical Feature Histograms (n={self.n_samples})")
         plt.tight_layout()
+        if save_plot is True:
+            plt.savefig(save_path + "categorical_histograms.png", format="png")
         if display_plot is True:
             plt.show()
-        if save_plot is True:
-            plt.savefig(save_path + "categorical_histograms.png")
+        plt.close()
 
     def plot_boxPlot(
         self,
         cols_to_plot: List[str] = None,
         display_plot: bool = True,
         save_plot: bool = False,
-        save_path: str = "",
+        save_path: str = None,
     ) -> None:
         """
         Plots and optionally displays and saves box plots of features.
@@ -767,7 +780,8 @@ class Analyzer:
             save_path (str, default=''): path of directory where the plot will be saves.
         """
         input_df: pd.DataFrame = self.df
-
+        if save_path == None:
+            save_path = self.dir_path
         if cols_to_plot is None:
             cols_to_plot = input_df.columns
         else:
@@ -783,17 +797,18 @@ class Analyzer:
         sns_plt.tick_params(axis="x", rotation=20)
         fig = sns_plt.get_figure()
         fig.suptitle(f"Boxplots of feature distributions (n = {self.n_samples})")
+        if save_plot is True:
+            fig.savefig(save_path + "boxPlot.png", bbox_inches="tight", format="png")
         if display_plot is True:
             fig.show()
-        if save_plot is True:
-            fig.savefig(save_path + "boxPlot.png", bbox_inches="tight")
+        plt.close(fig)
 
     def plot_pairPlot(
         self,
         cols_to_plot: List[str] = None,
         display_plot: bool = True,
         save_plot: bool = False,
-        save_path: str = "",
+        save_path: str = None,
         include_target: bool = False,
     ) -> None:
         """
@@ -805,7 +820,8 @@ class Analyzer:
             include_target (bool, default=False): Boolean specifying if the target (only first is used if multiple targets exist) is included in the plot.
         """
         input_df: pd.DataFrame = self.df
-
+        if save_path == None:
+            save_path = self.dir_path
         if cols_to_plot is None:
             cols_to_plot = input_df.columns
         else:
@@ -823,34 +839,13 @@ class Analyzer:
             sns_plt = sns.pairplot(input_df)
         fig = sns_plt.figure
         if save_plot is True:
-            fig.savefig(save_path + "pairPlot.png", bbox_inches="tight")
+            fig.savefig(save_path + "pairPlot.png", bbox_inches="tight", format="png")
+        if display_plot is True:
+            fig.show()
+        plt.close(fig)
 
 
-# def is_in_assertion(item, iterable, assert_on_true: bool=False)->None:
-#     """
-#     Checks if item (or collection of items) is found in a iterable object (List, array, etc.), if not found, an exception is raised.
-#     """
-#     type_assertion(assert_on_true,bool)
-#     if assert_on_true == True:
-#         try:
-#             iter(item)
-#         except: #Not iterable
-#             if item in iterable:
-#                 raise AssertionError(f"The item was found in the iterable.")
-#         else: #Iterable
-#             if any(item == x for x in iterable):
-#                 raise AssertionError
-#     else:
-#         try:
-#             iter(item)
-#         except: #Not iterable
-#             if item not in iterable:
-#                 raise AssertionError
-#         else: #Iterable
-#             if any(item == x for x in iterable):
-#                 pass
-#             else:
-#                 raise AssertionError
+
 
 
 # def feature_select(input_X: pd.DataFrame, input_y: pd.Series, method: str='auto', feature_list: List[str]=None):
